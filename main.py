@@ -47,15 +47,15 @@ def find_recommender(recommender):
 if __name__ == "__main__":
     is_windows = sys.platform.startswith('win')
     if is_windows:
-        root_dir = 'XXXXXXXX/PythonProjects/SGL-torch/'
-        data_dir = 'XXXXXXXX/PythonProjects/SGL-torch/dataset/'
+        root_dir = '/data/dingcl/SGL/'
+        data_dir = '/data/dingcl/SGL/dataset/'
     else:
-        root_dir = 'XXXXXXXX/PythonProjects/SGL-torch/'
-        data_dir = 'XXXXXXXX/PythonProjects/SGL-torch/dataset/'
+        root_dir = '/data/dingcl/SGL/'
+        data_dir = '/data/dingcl/SGL/dataset/'
     config = Configurator(root_dir, data_dir)
     config.add_config(root_dir + "NeuRec.ini", section="NeuRec")
     config.parse_cmd()
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(config["gpu_id"])
+    # os.environ['CUDA_VISIBLE_DEVICES'] = str(config["gpu_id"])
     _set_random_seed(config["seed"])
     Recommender = find_recommender(config.recommender)
 

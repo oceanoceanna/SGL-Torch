@@ -63,4 +63,5 @@ if __name__ == "__main__":
     config.add_config(model_cfg, section="hyperparameters", used_as_summary=True)
 
     recommender = Recommender(config)
-    recommender.train_model()
+    res_tuple = recommender.train_model()
+    time = recommender.gif_approxi(res_tuple)

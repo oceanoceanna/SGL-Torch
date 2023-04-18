@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" autoUpload="Always" serverName="dingcl@localhost:6000" remoteFilesAllowedToDisappearOnAutoupload="false">
+    <serverData>
+      <paths name="LDS13">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/data/dingcl/SGL" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="dingcl@114.214.164.244:36000">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/data/dingcl/SGL" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="dingcl@114.214.164.244:36000 (2)">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/data/dingcl/SGL" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="dingcl@localhost:6000">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/data/dingcl/SGL" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+    </serverData>
+    <option name="myAutoUpload" value="ALWAYS" />
+  </component>
+</project>

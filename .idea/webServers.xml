@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="30c553c7-c1d9-4913-b3a6-35ab4fcb8ab2" name="LDS13">
+        <fileTransfer accessType="SFTP" host="localhost" port="6000" sshConfigId="eec76040-2ef6-4bf9-8150-5bfcea05a2df" sshConfig="dingcl@localhost:6000 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

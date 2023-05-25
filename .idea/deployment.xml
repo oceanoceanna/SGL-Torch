@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="dingcl@localhost:6000" remoteFilesAllowedToDisappearOnAutoupload="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="LDS12" remoteFilesAllowedToDisappearOnAutoupload="false">
     <serverData>
-      <paths name="LDS13">
+      <paths name="LDS12">
         <serverdata>
           <mappings>
             <mapping deploy="/data/dingcl/SGL" local="$PROJECT_DIR$" web="/" />

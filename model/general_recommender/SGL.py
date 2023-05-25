@@ -60,36 +60,13 @@ class _LightGCN(nn.Module):
 
     def forward(self, users, items, neg_items):
         user_embeddings, item_embeddings = self._forward_gcn(self.norm_adj)
-        # user_embeddings1, item_embeddings1 = self._forward_gcn(sub_graph1)
-        # user_embeddings2, item_embeddings2 = self._forward_gcn(sub_graph2)
-
-        # Normalize embeddings learnt from sub-graph to construct SSL loss
-        # user_embeddings1 = F.normalize(user_embeddings1, dim=1)
-        # item_embeddings1 = F.normalize(item_embeddings1, dim=1)
-        # user_embeddings2 = F.normalize(user_embeddings2, dim=1)
-        # item_embeddings2 = F.normalize(item_embeddings2, dim=1)
-
         user_embs = F.embedding(users, user_embeddings)
         item_embs = F.embedding(items, item_embeddings)
         neg_item_embs = F.embedding(neg_items, item_embeddings)
-        # user_embs1 = F.embedding(users, user_embeddings1)
-        # item_embs1 = F.embedding(items, item_embeddings1)
-        # user_embs2 = F.embedding(users, user_embeddings2)
-        # item_embs2 = F.embedding(items, item_embeddings2)
 
         sup_pos_ratings = inner_product(user_embs, item_embs)       # [batch_size]
         sup_neg_ratings = inner_product(user_embs, neg_item_embs)   # [batch_size]
         sup_logits = sup_pos_ratings - sup_neg_ratings              # [batch_size]
-
-        # pos_ratings_user = inner_product(user_embs1, user_embs2)    # [batch_size]
-        # pos_ratings_item = inner_product(item_embs1, item_embs2)    # [batch_size]
-        # tot_ratings_user = torch.matmul(user_embs1,
-        #                                 torch.transpose(user_embeddings2, 0, 1))        # [batch_size, num_users]
-        # tot_ratings_item = torch.matmul(item_embs1,
-        #                                 torch.transpose(item_embeddings2, 0, 1))        # [batch_size, num_items]
-
-        # ssl_logits_user = tot_ratings_user - pos_ratings_user[:, None]                  # [batch_size, num_users]
-        # ssl_logits_item = tot_ratings_item - pos_ratings_item[:, None]                  # [batch_size, num_users]
 
         return sup_logits
 
@@ -98,10 +75,7 @@ class _LightGCN(nn.Module):
         all_embeddings = [ego_embeddings]
 
         for k in range(self.n_layers):
-            if isinstance(norm_adj, list):
-                ego_embeddings = torch_sp.mm(norm_adj[k], ego_embeddings)
-            else:
-                ego_embeddings = torch_sp.mm(norm_adj, ego_embeddings)
+            ego_embeddings = torch_sp.mm(norm_adj, ego_embeddings)
             all_embeddings += [ego_embeddings]
 
         all_embeddings = torch.stack(all_embeddings, dim=1).mean(dim=1)
@@ -189,16 +163,20 @@ class SGL(AbstractRecommender):
 
         self.num_users, self.num_items, self.num_ratings = self.dataset.num_users, self.dataset.num_items, self.dataset.num_train_ratings
 
-        self.device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
         adj_matrix = self.create_adj_mat()
         adj_matrix = sp_mat_to_sp_tensor(adj_matrix).to(self.device)
 
         self.lightgcn = _LightGCN(self.num_users, self.num_items, self.emb_size,
                                   adj_matrix, self.n_layers).to(self.device)
+        self.lightgcnnew = _LightGCN(self.num_users, self.num_items, self.emb_size,
+                                  adj_matrix, self.n_layers).to(self.device)
         if self.pretrain_flag:
             self.lightgcn.reset_parameters(pretrain=self.pretrain_flag, dir=self.save_dir)
+            self.lightgcnnew.reset_parameters(pretrain=self.pretrain_flag, dir=self.save_dir)
         else:
             self.lightgcn.reset_parameters(init_method=self.param_init)
+            self.lightgcnnew.reset_parameters(init_method=self.param_init)
         self.optimizer = torch.optim.Adam(self.lightgcn.parameters(), lr=self.lr)
 
     @timer
@@ -207,32 +185,32 @@ class SGL(AbstractRecommender):
         users_items = self.dataset.train_data.to_user_item_pairs()
         users_np, items_np = users_items[:, 0], users_items[:, 1]
 
-        if is_subgraph and self.ssl_ratio > 0:
-            if aug_type == 'nd':
-                drop_user_idx = randint_choice(self.num_users, size=self.num_users * self.ssl_ratio, replace=False)
-                drop_item_idx = randint_choice(self.num_items, size=self.num_items * self.ssl_ratio, replace=False)
-                indicator_user = np.ones(self.num_users, dtype=np.float32)
-                indicator_item = np.ones(self.num_items, dtype=np.float32)
-                indicator_user[drop_user_idx] = 0.
-                indicator_item[drop_item_idx] = 0.
-                diag_indicator_user = sp.diags(indicator_user)
-                diag_indicator_item = sp.diags(indicator_item)
-                R = sp.csr_matrix(
-                    (np.ones_like(users_np, dtype=np.float32), (users_np, items_np)), 
-                    shape=(self.num_users, self.num_items))
-                R_prime = diag_indicator_user.dot(R).dot(diag_indicator_item)
-                (user_np_keep, item_np_keep) = R_prime.nonzero()
-                ratings_keep = R_prime.data
-                tmp_adj = sp.csr_matrix((ratings_keep, (user_np_keep, item_np_keep+self.num_users)), shape=(n_nodes, n_nodes))
-            # if aug_type in ['ed', 'rw']:
-            #     keep_idx = randint_choice(len(users_np), size=int(len(users_np) * (1 - self.ssl_ratio)), replace=False)
-            #     user_np = np.array(users_np)[keep_idx]
-            #     item_np = np.array(items_np)[keep_idx]
-            #     ratings = np.ones_like(user_np, dtype=np.float32)
-            #     tmp_adj = sp.csr_matrix((ratings, (user_np, item_np+self.num_users)), shape=(n_nodes, n_nodes))
-        else:
-            ratings = np.ones_like(users_np, dtype=np.float32)
-            tmp_adj = sp.csr_matrix((ratings, (users_np, items_np+self.num_users)), shape=(n_nodes, n_nodes))
+        # if is_subgraph and self.ssl_ratio > 0:
+        #     if aug_type == 'nd':
+        #         drop_user_idx = randint_choice(self.num_users, size=self.num_users * self.ssl_ratio, replace=False)
+        #         drop_item_idx = randint_choice(self.num_items, size=self.num_items * self.ssl_ratio, replace=False)
+        #         indicator_user = np.ones(self.num_users, dtype=np.float32)
+        #         indicator_item = np.ones(self.num_items, dtype=np.float32)
+        #         indicator_user[drop_user_idx] = 0.
+        #         indicator_item[drop_item_idx] = 0.
+        #         diag_indicator_user = sp.diags(indicator_user)
+        #         diag_indicator_item = sp.diags(indicator_item)
+        #         R = sp.csr_matrix(
+        #             (np.ones_like(users_np, dtype=np.float32), (users_np, items_np)),
+        #             shape=(self.num_users, self.num_items))
+        #         R_prime = diag_indicator_user.dot(R).dot(diag_indicator_item)
+        #         (user_np_keep, item_np_keep) = R_prime.nonzero()
+        #         ratings_keep = R_prime.data
+        #         tmp_adj = sp.csr_matrix((ratings_keep, (user_np_keep, item_np_keep+self.num_users)), shape=(n_nodes, n_nodes))
+        #     # if aug_type in ['ed', 'rw']:
+        #     #     keep_idx = randint_choice(len(users_np), size=int(len(users_np) * (1 - self.ssl_ratio)), replace=False)
+        #     #     user_np = np.array(users_np)[keep_idx]
+        #     #     item_np = np.array(items_np)[keep_idx]
+        #     #     ratings = np.ones_like(user_np, dtype=np.float32)
+        #     #     tmp_adj = sp.csr_matrix((ratings, (user_np, item_np+self.num_users)), shape=(n_nodes, n_nodes))
+        # else:
+        ratings = np.ones_like(users_np, dtype=np.float32)
+        tmp_adj = sp.csr_matrix((ratings, (users_np, items_np+self.num_users)), shape=(n_nodes, n_nodes))
         adj_mat = tmp_adj + tmp_adj.T
 
         # normalize adjcency matrix
@@ -321,7 +299,6 @@ class SGL(AbstractRecommender):
         # edit for batch_size only for BPR
         # TODO: cal the grad for all training samples
         forward_data_iter = PairwiseSamplerV2(self.dataset.train_data, num_neg=1, batch_size=self.dataset.train_data.num_ratings, shuffle=True)
-        total_loss, total_bpr_loss, total_reg_loss = 0.0, 0.0, 0.0
         grad_all, grad_1, grad_2 = None, None, None
         for all_users, all_pos_items, all_neg_items in forward_data_iter:
             all_users = torch.from_numpy(all_users).long().to(self.device)
@@ -351,7 +328,6 @@ class SGL(AbstractRecommender):
 
 
 
-
         # @timer
     def evaluate_model(self):
         flag = False
@@ -370,12 +346,11 @@ class SGL(AbstractRecommender):
         '''
         res_tuple == (grad_all, grad1, grad2，trainingloader)
         '''
-        inverse_hvp = None
+
         start_time = time()
         iteration, damp, scale = self.iteration, self.damp, self.scale
-        recursion_depth = 1000
-        v = res_tuple[1]
-        h_estimate = res_tuple[1]
+        v = tuple(grad1 - grad2 for grad1, grad2 in zip(res_tuple[1], res_tuple[2]))
+        h_estimate = v
 
         # recursion_depth = batch数量
         for _ in range(iteration):
@@ -384,12 +359,106 @@ class SGL(AbstractRecommender):
                 h_estimate = [v1 + (1 - damp) * h_estimate1 - hv1 / scale
                               for v1, h_estimate1, hv1 in zip(v, h_estimate, hv)]
 
-        params_change = [h_est / scale for h_est in h_estimate]
-        params_esti = [p1 + p2 for p1, p2 in zip(params_change, self.lightgcn.parameters())]
 
+        params_change = [h_est / scale for h_est in h_estimate]
+
+        params_esti = [p1 + p2 for p1, p2 in zip(params_change, self.lightgcn.parameters())]
+        print(params_esti)
         # TODO:有unlearn后的参数的forward方法
+        self.eva_new_params(params_esti)
         # test_F1 = self.target_model.evaluate_unlearn_F1(params_esti)
         return time() - start_time
+
+    # 用模型训练好的self._lightgcn.parameters()来forward influencelist算loss，用原图（所以lightgcn对象不变）
+    def get_ingrad_before(self,data_iter):
+        for all_users, all_pos_items, all_neg_items in data_iter:
+            all_users = torch.from_numpy(all_users).long().to(self.device)
+            all_pos_items = torch.from_numpy(all_pos_items).long().to(self.device)
+            all_neg_items = torch.from_numpy(all_neg_items).long().to(self.device)
+            all_sup_logits = self.lightgcn(
+                all_users, all_pos_items, all_neg_items)
+
+            # BPR Loss
+            bpr_loss = -torch.sum(F.logsigmoid(all_sup_logits))
+
+            # Reg Loss
+            reg_loss = l2_loss(
+                self.lightgcn.user_embeddings(all_users),
+                self.lightgcn.item_embeddings(all_pos_items),
+                self.lightgcn.item_embeddings(all_neg_items),
+            )
+
+            loss = bpr_loss + self.reg * reg_loss
+            ingrad_before = grad(loss, self.lightgcn.parameters())
+        return ingrad_before
+
+    def create_adj_mat_update(self,dataset):
+        n_nodes = self.num_users + self.num_items
+        users_items = dataset.train_data.to_user_item_pairs()
+        users_np, items_np = users_items[:, 0], users_items[:, 1]
+        ratings = np.ones_like(users_np, dtype=np.float32)
+        tmp_adj = sp.csr_matrix((ratings, (users_np, items_np+self.num_users)), shape=(n_nodes, n_nodes))
+        adj_mat = tmp_adj + tmp_adj.T
+        # normalize adjcency matrix
+        rowsum = np.array(adj_mat.sum(1))
+        d_inv = np.power(rowsum, -0.5).flatten()
+        d_inv[np.isinf(d_inv)] = 0.
+        d_mat_inv = sp.diags(d_inv)
+        norm_adj_tmp = d_mat_inv.dot(adj_mat)
+        adj_matrix = norm_adj_tmp.dot(d_mat_inv)
+
+        return adj_matrix
+
+    # 用模型训练好的self._lightgcn.parameters()来forward influencelist算loss，用新图（用新的lightgcn对象）
+    def get_ingrad_after(self,dataset,data_iter):
+        new_matrix = self.create_adj_mat_update(dataset)
+        new_matrix = sp_mat_to_sp_tensor(new_matrix).to(self.device)
+        self.lightgcnnew = _LightGCN(self.num_users, self.num_items, self.emb_size,
+                                     new_matrix, self.n_layers).to(self.device)
+        self.lightgcnnew.reset_parameters(pretrain=self.pretrain_flag, dir=self.save_dir)
+        # 更新lightgcnnew的参数为lightgcn的
+        params = [p1 for p1 in self.lightgcn.parameters()]
+        idx = 0
+        for p in self.lightgcnnew.parameters():
+            p.data = params[idx]
+            idx = idx + 1
+        self.lightgcnnew.train()
+        for all_users, all_pos_items, all_neg_items in data_iter:
+            all_users = torch.from_numpy(all_users).long().to(self.device)
+            all_pos_items = torch.from_numpy(all_pos_items).long().to(self.device)
+            all_neg_items = torch.from_numpy(all_neg_items).long().to(self.device)
+            all_sup_logits = self.lightgcnnew(
+                all_users, all_pos_items, all_neg_items)
+
+            # BPR Loss
+            bpr_loss = -torch.sum(F.logsigmoid(all_sup_logits))
+
+            # Reg Loss
+            reg_loss = l2_loss(
+                self.lightgcnnew.user_embeddings(all_users),
+                self.lightgcnnew.item_embeddings(all_pos_items),
+                self.lightgcnnew.item_embeddings(all_neg_items),
+            )
+
+            loss = bpr_loss + self.reg * reg_loss
+            ingrad_after = grad(loss, self.lightgcnnew.parameters())
+        return ingrad_after
+
+
+
+    # unlearn后的forward+评价
+    def eva_new_params(self,params):
+        # 实现模型参数的更新
+        idx = 0
+        for p in self.lightgcn.parameters():
+            p.data = params[idx]
+            idx = idx + 1
+
+        # to edit
+        self.lightgcn.eval()
+        current_result, buf = self.evaluator.evaluate(self)
+        self.logger.info("%s" % current_result)
+        return
 
     def hvps(self, grad_all, model_params, h_estimate):
         element_product = 0

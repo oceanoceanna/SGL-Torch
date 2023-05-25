@@ -98,6 +98,34 @@ class Interaction(object):
             self._buffer["user_dict"] = deepcopy(user_dict)
         return user_dict
 
+    def to_user_dict_list(self, by_time=False):
+        if self._data.empty:
+            warnings.warn("self._data is empty.")
+            return None
+
+        if by_time and _TIME not in self._data:
+            raise ValueError("This dataset do not have timestamp.")
+
+        # read from buffer
+        if by_time is True and "user_dict_byt" in self._buffer:
+            return deepcopy(self._buffer["user_dict_byt"])
+        if by_time is False and "user_dict" in self._buffer:
+            return deepcopy(self._buffer["user_dict"])
+
+        user_dict = OrderedDict()
+        user_grouped = self._data.groupby(_USER)
+        for user, user_data in user_grouped:
+            if by_time:
+                user_data = user_data.sort_values(by=[_TIME])
+            user_dict[user] = list(user_data[_ITEM].to_numpy(dtype=np.int32))
+
+        # write to buffer
+        if by_time is True:
+            self._buffer["user_dict_byt"] = deepcopy(user_dict)
+        else:
+            self._buffer["user_dict"] = deepcopy(user_dict)
+        return user_dict
+
     def to_item_dict(self):
         if self._data.empty:
             warnings.warn("self._data is empty.")
@@ -201,7 +229,7 @@ class Interaction(object):
 
 
 class Dataset(object):
-    def __init__(self, data_dir, dataset_name, sep, columns):
+    def __init__(self, data_dir, dataset_name, sep, columns,flag=True,prefix = ""):
         """Dataset
 
         Notes:
@@ -233,7 +261,8 @@ class Dataset(object):
         self.item2id = None
         self.id2user = None
         self.id2item = None
-
+        self.flag = flag
+        self.prefix = prefix
         # statistic
         self.num_users = 0
         self.num_items = 0
@@ -299,11 +328,15 @@ class Dataset(object):
             raise ValueError("'columns' must be one of '%s'." % key_str)
 
         columns = _column_dict[columns]
-
+        file_prefix = data_dir
         file_prefix = os.path.join(data_dir, self.data_name)
+        if self.flag==0:
+            file_prefix = file_prefix + self.prefix
 
         # load data
         train_file = file_prefix+".train"
+
+
         if os.path.isfile(train_file):
             _train_data = pd.read_csv(train_file, sep=sep, header=None, names=columns)
         else:
@@ -320,7 +353,12 @@ class Dataset(object):
         if os.path.isfile(test_file):
             _test_data = pd.read_csv(test_file, sep=sep, header=None, names=columns)
         else:
-            raise FileNotFoundError("%s does not exist." % test_file)
+            if self.flag:
+                raise FileNotFoundError("%s does not exist." % test_file)
+            else:
+                test_file = os.path.join(data_dir, self.data_name) + ".test"
+                _test_data = pd.read_csv(test_file, sep=sep, header=None, names=columns)
+
 
         user2id_file = file_prefix + ".user2id"
         if os.path.isfile(user2id_file):

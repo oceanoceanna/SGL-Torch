@@ -47,7 +47,7 @@ def find_recommender(recommender):
         raise ImportError(f"Import {recommender} failed from {module.__file__}!")
     return Recommender
 
-
+#找到去除的脏边在newdataset中的邻居（用边做loss）
 def find_k_hops(attack_list, unique_users, unique_items, datasetnew):
     influence_list = []
     train_dict_users = datasetnew.train_data.to_user_dict()
@@ -72,6 +72,9 @@ def find_k_hops(attack_list, unique_users, unique_items, datasetnew):
 
 
 if __name__ == "__main__":
+    attack_ratio = 0.001
+
+    flag = False
     is_windows = sys.platform.startswith('win')
     if is_windows:
         root_dir = '/data/dingcl/SGL/'
@@ -90,17 +93,32 @@ if __name__ == "__main__":
     config.add_config(model_cfg, section="hyperparameters", used_as_summary=True)
 
     recommender = Recommender(config)
-    res_tuple = recommender.train_model()
 
-    # test
+    # if flag==True:
+    #     # 已经pretrain，用训练好的lightgcn对象赋值，然后forward一边全图，得整个training set上的loss
+    #     recommender.lightgcn = torch.load('/data/dingcl/SGL/pretrain-lightgcn.pt')
+    #     res_tuple = recommender.get_train_grad()
+    # else:
+    #     # 没有pretrain，重新训练
+    #     recommender.train_model()
+    #     res_tuple = recommender.get_train_grad()
+    #     recommender.save_model()
+    #     flag = True
+
+
+
+
+    # test for add attack edges and test for save newdataset and model
     is_windows = sys.platform.startswith('win')
     if is_windows:
         root_folder = '/data/dingcl/SGL/'
     else:
         root_folder = '/data/dingcl/SGL/'
 
+    # 原来的yelp dataset（其实应该是unlearn后的结果）
     dataset = Dataset('/data/dingcl/SGL/dataset/', 'yelp2018', ',', 'UI')
 
+    # 初始化原dataset的信息
     num_users = dataset.num_users
     num_items = dataset.num_items
     train_dict = dataset.train_data.to_user_dict_list()
@@ -110,7 +128,8 @@ if __name__ == "__main__":
     attack_list = []
     unique_users = []
     unique_items = []
-    while count < num_trainings * 0.1:
+    # 加脏边
+    while count < num_trainings * attack_ratio:
         u_id = np.random.randint(num_users)
         i_id = np.random.randint(num_items)
         if i_id not in train_dict[u_id]:
@@ -130,26 +149,40 @@ if __name__ == "__main__":
     # dir = root_folder + "/dataset/"
     # dir = dir + dataset.data_name
     # dir = dir+ "/" +dataset.data_name + "_"
-    with open(root_folder + '/dataset/%s/%s_%.3f.train' % (dataset.data_name, dataset.data_name, 0.001), 'w') as fw:
+
+    # 写的train文件是加了脏边后的整个数据集
+    with open(root_folder + '/dataset/%s/%s_%.3f.train' % (dataset.data_name, dataset.data_name, attack_ratio), 'w') as fw:
         for u in train_dict:
             for i in train_dict[u]:
                 outstr = '%s,%s\n' % (str(u), str(i))
                 fw.write(outstr)
-    attack_list
+    new_path = root_folder + '/dataset/%s/%s_%.3f.train'% (dataset.data_name, dataset.data_name, attack_ratio)
+
+    # 读新的文件构造dataset_new其实是要训练的新数据集
     datasetnew = Dataset('/data/dingcl/SGL/dataset/', 'yelp2018', ',', 'UI', 0, '_0.001')
     unique_items = set(unique_items)
     unique_users = set(unique_users)
+    # unlearn前确定受影响范围，find k hops
     influence_list = find_k_hops(attack_list, unique_users, unique_items, datasetnew)
     num_users = dataset.num_users
     num_items = dataset.num_items
+    # 受影响的交互做成Interaction形式
     df_data = pd.DataFrame(influence_list, columns=["user", "item"])
     influence_interaction = Interaction(df_data, num_users, num_items)
 
+    # train dataset——new并得到整个trainingset上的grad
+    recommender.dataset = datasetnew
+    recommender.train_model()
+    grad_all = recommender.get_train_grad()
+    # 用Interaction做data—iter，forward求loss和梯度
     data_iter = PairwiseSamplerV2(influence_interaction, num_neg=1, batch_size=influence_interaction.num_ratings,
                                   shuffle=True)
-
+    # 求influence Interaction在datasetnew整个数据集上原来的loss和grad
     grad1 = recommender.get_ingrad_before(data_iter)
+    # 求influence Interaction在new——dataset整个数据集上原来的loss和grad（对于sgl用lightgcnnew对象，并且用new matrix）
     grad_2 = recommender.get_ingrad_after(dataset, data_iter)
-    tuple = (res_tuple[0],grad1,grad_2)
+
+    # res——tuple[0]在训练dataset原得到（所有梯度信息）
+    tuple = (grad_all,grad1,grad_2)
     time = recommender.gif_approxi(tuple)
     print(time)

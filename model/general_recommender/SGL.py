@@ -98,6 +98,7 @@ class _LightGCN(nn.Module):
 
 class SGL(AbstractRecommender):
     def __init__(self, config):
+        self.unlearn = False
         super(SGL, self).__init__(config)
 
         self.config = config
@@ -163,7 +164,7 @@ class SGL(AbstractRecommender):
 
         self.num_users, self.num_items, self.num_ratings = self.dataset.num_users, self.dataset.num_items, self.dataset.num_train_ratings
 
-        self.device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cuda:5' if torch.cuda.is_available() else 'cpu')
         adj_matrix = self.create_adj_mat()
         adj_matrix = sp_mat_to_sp_tensor(adj_matrix).to(self.device)
 
@@ -228,7 +229,7 @@ class SGL(AbstractRecommender):
         self.logger.info(self.evaluator.metrics_info())
         stopping_step = 0
         # 训练过程
-        for epoch in range(1, 2):
+        for epoch in range(1, self.epochs):
             total_loss, total_bpr_loss, total_reg_loss = 0.0, 0.0, 0.0
             training_start_time = time()
             self.lightgcn.train()
@@ -296,10 +297,42 @@ class SGL(AbstractRecommender):
             buf = '\t'.join([("%.4f" % x).ljust(12) for x in self.best_result])
         self.logger.info("\t\t%s" % buf)
 
-        # edit for batch_size only for BPR
+        # # edit for batch_size only for BPR
+        # # TODO: cal the grad for all training samples
+        # forward_data_iter = PairwiseSamplerV2(self.dataset.train_data, num_neg=1, batch_size=self.dataset.train_data.num_ratings, shuffle=True)
+        # grad_all, grad_1, grad_2 = None, None, None
+        # for all_users, all_pos_items, all_neg_items in forward_data_iter:
+        #     all_users = torch.from_numpy(all_users).long().to(self.device)
+        #     all_pos_items = torch.from_numpy(all_pos_items).long().to(self.device)
+        #     all_neg_items = torch.from_numpy(all_neg_items).long().to(self.device)
+        #     all_sup_logits = self.lightgcn(
+        #         all_users, all_pos_items, all_neg_items)
+        #
+        #     # BPR Loss
+        #     bpr_loss = -torch.sum(F.logsigmoid(all_sup_logits))
+        #
+        #     # Reg Loss
+        #     reg_loss = l2_loss(
+        #         self.lightgcn.user_embeddings(all_users),
+        #         self.lightgcn.item_embeddings(all_pos_items),
+        #         self.lightgcn.item_embeddings(all_neg_items),
+        #     )
+        #
+        #     loss = bpr_loss + self.reg * reg_loss
+        #     grad_all = grad(loss,self.lightgcn.parameters(),create_graph=True,retain_graph=True)
+        #
+        # # TODO: edit the grad_1, grad_2
+        #
+        #     grad_1 = grad_all
+
+        return
+
+
+    def get_train_grad(self):
         # TODO: cal the grad for all training samples
-        forward_data_iter = PairwiseSamplerV2(self.dataset.train_data, num_neg=1, batch_size=self.dataset.train_data.num_ratings, shuffle=True)
-        grad_all, grad_1, grad_2 = None, None, None
+        forward_data_iter = PairwiseSamplerV2(self.dataset.train_data, num_neg=1,
+                                              batch_size=self.dataset.train_data.num_ratings, shuffle=True)
+        grad_all = None
         for all_users, all_pos_items, all_neg_items in forward_data_iter:
             all_users = torch.from_numpy(all_users).long().to(self.device)
             all_pos_items = torch.from_numpy(all_pos_items).long().to(self.device)
@@ -318,16 +351,12 @@ class SGL(AbstractRecommender):
             )
 
             loss = bpr_loss + self.reg * reg_loss
-            grad_all = grad(loss,self.lightgcn.parameters(),create_graph=True,retain_graph=True)
+            grad_all = grad(loss, self.lightgcn.parameters(), create_graph=True, retain_graph=True)
 
-        # TODO: edit the grad_1, grad_2
-
-            grad_1 = grad_all
-
-        return (grad_all,grad_1,grad_2)
+            # TODO: edit the grad_1, grad_2
 
 
-
+        return grad_all
         # @timer
     def evaluate_model(self):
         flag = False
@@ -340,7 +369,10 @@ class SGL(AbstractRecommender):
 
     def predict(self, users):
         users = torch.from_numpy(np.asarray(users)).long().to(self.device)
-        return self.lightgcn.predict(users).cpu().detach().numpy()
+        result = self.lightgcn.predict(users).cpu().detach().numpy()
+        if self.unlearn:
+            result = self.lightgcnnew.predict(users).cpu().detach().numpy()
+        return result
 
     def gif_approxi(self, res_tuple):
         '''
@@ -375,6 +407,7 @@ class SGL(AbstractRecommender):
             all_users = torch.from_numpy(all_users).long().to(self.device)
             all_pos_items = torch.from_numpy(all_pos_items).long().to(self.device)
             all_neg_items = torch.from_numpy(all_neg_items).long().to(self.device)
+            # 这里的lightgcn是用datasetnew训练的lightgcn
             all_sup_logits = self.lightgcn(
                 all_users, all_pos_items, all_neg_items)
 
@@ -390,9 +423,11 @@ class SGL(AbstractRecommender):
 
             loss = bpr_loss + self.reg * reg_loss
             ingrad_before = grad(loss, self.lightgcn.parameters())
+        # 算的是sgl的lightgcn对Interaction部分的交互的loss
         return ingrad_before
 
     def create_adj_mat_update(self,dataset):
+        # 传入dataset，构造新矩阵
         n_nodes = self.num_users + self.num_items
         users_items = dataset.train_data.to_user_item_pairs()
         users_np, items_np = users_items[:, 0], users_items[:, 1]
@@ -442,6 +477,7 @@ class SGL(AbstractRecommender):
 
             loss = bpr_loss + self.reg * reg_loss
             ingrad_after = grad(loss, self.lightgcnnew.parameters())
+        self.unlearn = True
         return ingrad_after
 
 
@@ -450,12 +486,12 @@ class SGL(AbstractRecommender):
     def eva_new_params(self,params):
         # 实现模型参数的更新
         idx = 0
-        for p in self.lightgcn.parameters():
+        for p in self.lightgcnnew.parameters():
             p.data = params[idx]
             idx = idx + 1
 
         # to edit
-        self.lightgcn.eval()
+        self.lightgcnnew.eval()
         current_result, buf = self.evaluator.evaluate(self)
         self.logger.info("%s" % current_result)
         return
@@ -467,3 +503,7 @@ class SGL(AbstractRecommender):
 
         return_grads = grad(element_product, model_params, create_graph=True)
         return return_grads
+
+    def save_model(self):
+        torch.save(self.lightgcn, '/data/dingcl/SGL/pretrain-lightgcn.pt')
+
